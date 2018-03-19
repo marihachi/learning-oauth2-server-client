@@ -1,0 +1,9 @@
+doctype html
+
+html
+	body
+		h1 Auth
+
+		form(action="/oauth/authorize" method="post")
+			input(name="transaction_id" type="hidden" value=tid)
+			input(type="submit" value="Allow" id="allow")
