@@ -2,6 +2,8 @@
 おべんきょです。  
 まずはコードで殴ってみる。
 
+Passportの概念が特殊なのでそこの理解が必要そう。
+
 ## Requirements
 - Node.js >= v8.0
 - MongoDb

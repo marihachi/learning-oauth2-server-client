@@ -3,11 +3,12 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const { ObjectId } = require('mongodb');
 const passport = require('passport');
+const { Strategy : LocalStrategy } = require('passport-local');
 const MongoAdapter = require('./modules/MongoAdapter');
-const OAuth = require('./modules/OAuth');
+const OAuthServer = require('./modules/OAuthServer');
 const session = require('express-session');
 const connectRedis = require('connect-redis');
-const basicAuth = require('basic-auth-connect');
+const debug = require('./modules/debug');
 
 const sessionStore = new (connectRedis(session))({});
 
@@ -33,22 +34,39 @@ const sessionStore = new (connectRedis(session))({});
 	}));
 	app.use(passport.initialize());
 	app.use(passport.session());
-	app.use(async (req, res, next) => {
+
+	// passport
+
+	// 通常のログイン認証向け
+	passport.use('login', new LocalStrategy(async (screenName, password, done) => {
 		try {
-			if (req.session.userId != null) {
-				req.user = await db.find('users', { _id: new ObjectId(req.session.userId) });
-				if (req.user == null) {
-					req.session.userId = null;
-				}
+			const user = await db.find('users', { screenName: screenName });
+			if (user == null || user.password != password) {
+				return done(null, false);
 			}
-			next();
+			done(null, user);
 		}
 		catch (err) {
-			next(err);
+			done(err);
+		}
+	}));
+	// セッションとユーザー情報を関連付けるために必要
+	passport.serializeUser((user, done) => {
+		done(null, user._id);
+	});
+	passport.deserializeUser(async (id, done) => {
+		try {
+			const user = await db.find('users', { _id: new ObjectId(id) });
+			done(null, user);
+		}
+		catch (err) {
+			done(err);
 		}
 	});
 
-	// 仮のクライアントデータ
+	// 仮データを登録
+
+	// クライアントデータ
 	let client = await db.find('oauth2.clients', { name: 'hoge' });
 	if (client == null) {
 		client = await db.create('oauth2.clients', {
@@ -57,62 +75,76 @@ const sessionStore = new (connectRedis(session))({});
 		});
 	}
 	console.log(`clinetId: ${client._id.toString()}`);
-
-	// 仮のユーザーデータ
-	let user = await db.find('users', { name: 'piyo' });
+	// ユーザーデータ
+	let user = await db.find('users', { screenName: 'piyo' });
 	if (user == null) {
 		user = await db.create('users', {
-			name: 'piyo'
+			screenName: 'piyo',
+			password: 'hoge'
 		});
 	}
 
-	const oauth = new OAuth(db).server;
+	const oAuthServer = new OAuthServer(db);
+	oAuthServer.build();
+	oAuthServer.defineStrategies();
 
 	app.get('/', (req, res) => {
-		res.send(req.user != null ? 'ログインしています' : 'ログインしていません');
+		res.render('top', { user: req.user });
 	});
 
-	app.put('/session', (req, res) => {
-		req.session.userId = user._id.toString();
-		res.send();
+	app.get('/account', (req, res) => {
+		if (!req.isAuthenticated())
+			return res.status(403).send('need login');
+
+		res.render('account', { user: req.user });
 	});
 
-	app.delete('/session', (req, res) => {
-		req.session.userId = null;
-		res.send();
+	app.get('/login', (req, res) => {
+		res.render('login', { });
+	});
+	app.post('/login', passport.authenticate('login', { successRedirect: '/', failureRedirect: '/login' }));
+	app.post('/logout', (req, res) => {
+		req.logout();
+		res.redirect('/');
 	});
 
 	app.route('/oauth/authorize')
-		.get(oauth.authorization(async (clientId, redirectUri, validated) => {
+		.get(oAuthServer._server.authorization(async (clientId, redirectUri, validated) => {
 			try {
 				const client = await db.find('oauth2.clients', { _id: new ObjectId(clientId) });
-				return validated(null, client, redirectUri);
+				// TODO: 検証処理
+				debug('認可の検証に成功');
+				validated(null, client, redirectUri);
 			}
 			catch (err) {
-				return validated(err);
+				debug('認可の検証でエラーが発生');
+				validated(err);
 			}
 		}, async (client, user, immediated) => {
 			try {
 				const token = await db.find('oauth2.tokens', { clientId: client._id, userId: user._id });
 				if (token != null) {
-					immediated(null, true);
-					return;
+					debug('即時に認可');
+					return immediated(null, true);
 				}
+				debug('認可フォームを表示');
 				immediated(null, false);
 			}
 			catch (err) {
-				return immediated(err);
+				debug('即時判定でエラーが発生');
+				immediated(err);
 			}
-		}),
-		(req, res) => {
+		}), (req, res) => {
 			res.render('authorizationDialog', { tid: req.oauth2.transactionID, user: req.user, client: req.oauth2.client });
 		})
-		.post(oauth.decision());
+		.post(oAuthServer._server.decision());
 
-	app.post('/oauth/token', basicAuth('5aaea8eb947f8f04ec390f1b', '123'), oauth.token());
+	app.post('/oauth/token',
+		passport.authenticate(['clientBasic', 'clientPassword'], { session: false }),
+		oAuthServer._server.token());
 
-	app.get('/secure', passport.authenticate('bearer', { session: false }), (req, res) => {
-		res.send('secure area');
+	app.get('/api', passport.authenticate('accessToken', { session: false }), (req, res) => {
+		res.send('api area');
 	});
 
 	app.use((err, req, res, next) => {

@@ -1,0 +1,15 @@
+doctype html
+
+html
+	body
+		h1 Hello
+		p login state: #{ user != null ? 'Yes' : 'No' }
+
+		a(href='/account') account page
+
+		div
+			if (user != null)
+				form(action="/logout" method="post")
+					input(type="submit" value="Logout")
+			else
+				a(href='/login') login here
