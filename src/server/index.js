@@ -131,7 +131,7 @@ const sessionStore = new (connectRedis(session))({});
 				immediated(null, false);
 			}
 			catch (err) {
-				debug('即時判定でエラーが発生');
+				debug('即時認可の判定でエラーが発生');
 				immediated(err);
 			}
 		}), (req, res) => {

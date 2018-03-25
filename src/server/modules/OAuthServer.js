@@ -44,7 +44,7 @@ class OAuthServer {
 				callback(null, code.value);
 			}
 			catch (err) {
-				debug('コード取得時にエラーが発生');
+				debug('コード登録時にエラーが発生');
 				callback(err);
 			}
 		}));
